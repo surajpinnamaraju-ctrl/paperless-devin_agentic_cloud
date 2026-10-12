@@ -1,3 +1,6 @@
+import sys
+
+from django.contrib.auth.models import User
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -6,8 +9,10 @@ from rest_framework.views import APIView
 from documents.models import DocumentReview
 from documents.review import mutate_review
 from documents.review import queue_queryset
-from documents.review import review_response
+from documents.review import read_review
+from documents.review import retry_sqlite
 from documents.review import validate_payload
+from documents.review import validate_reviewer
 from documents.review import visible_document
 
 
@@ -17,13 +22,18 @@ class DocumentReviewView(APIView):
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
+        request.user = retry_sqlite(
+            lambda: User.objects.get(pk=request.user.pk),
+            "default",
+        )
         self.document = visible_document(request.user, kwargs["pk"])
 
     def get(self, request, pk):
-        return Response(review_response(self.document, request.user))
+        return Response(read_review(self.document, request.user))
 
     def post(self, request, pk):
         validate_payload(request.data, self.document, request.user)
+        validate_reviewer(request.data, self.document, request.user)
         return Response(mutate_review(self.document, request.user, request.data))
 
 
@@ -41,7 +51,7 @@ def query_integer(params, name, default=None, maximum=None):
         value = int(value)
     except ValueError as exc:
         raise ValidationError(f"Invalid {name}.") from exc
-    if value < 1 or (maximum is not None and value > maximum):
+    if value < 1 or value > (maximum if maximum is not None else sys.maxsize):
         raise ValidationError(f"Invalid {name}.")
     return value
 
@@ -62,12 +72,16 @@ class ReviewQueueView(APIView):
         reviewer = query_integer(params, "reviewer")
         page = query_integer(params, "page", 1)
         size = query_integer(params, "page_size", 20, maximum=100)
-        queryset = queue_queryset(request.user)
+        assert page is not None and size is not None
+        actor = User.objects.get(pk=request.user.pk)
+        queryset = queue_queryset(actor)
         if state is not None:
             queryset = queryset.filter(state=state)
         if reviewer is not None:
             queryset = queryset.filter(reviewer_id=reviewer)
         offset = (page - 1) * size
+        if offset > sys.maxsize - size:
+            raise ValidationError("Invalid page.")
         return Response(
             {
                 "count": queryset.count(),

@@ -40,7 +40,7 @@ def can_access(user, document, action="view"):
     )
 
 
-def visible_document(user, document_id):
+def _visible_document(user, document_id):
     try:
         document = Document.global_objects.get(pk=document_id)
         if document.root_document_id:
@@ -50,6 +50,10 @@ def visible_document(user, document_id):
     if not can_access(user, document):
         raise NotFound
     return document
+
+
+def visible_document(user, document_id):
+    return retry_sqlite(lambda: _visible_document(user, document_id), "default")
 
 
 def eligible_reviewers(document, actor):
@@ -89,7 +93,11 @@ def review_response(document, actor, review=None):
             allowed_actions = ["submit"]
         elif state in (DocumentReview.State.APPROVED, DocumentReview.State.REJECTED):
             allowed_actions = ["reopen"]
-        elif review.reviewer_id == actor.pk and review.submitted_by_id != actor.pk:
+        elif (
+            review
+            and review.reviewer_id == actor.pk
+            and review.submitted_by_id != actor.pk
+        ):
             allowed_actions = ["approve", "reject"]
     return {
         "document": document.pk,
@@ -113,6 +121,24 @@ def review_response(document, actor, review=None):
         "allowed_actions": allowed_actions,
         "eligible_reviewers": eligible_reviewers(document, actor),
     }
+
+
+def read_review(document, actor):
+    using = document._state.db
+
+    def read():
+        with transaction.atomic(using=using):
+            current = (
+                Document.global_objects.using(using)
+                .select_for_update()
+                .get(pk=document.pk)
+            )
+            user = User.objects.using(using).get(pk=actor.pk)
+            if not can_access(user, current):
+                raise NotFound
+            return review_response(current, user)
+
+    return retry_sqlite(read, using)
 
 
 def validate_payload(payload, document, actor):
@@ -165,6 +191,17 @@ def validate_reviewer(payload, document, actor):
             or not can_access(reviewer, document)
             or not can_access(reviewer, document, "change")
         ):
+            previous = (
+                ReviewRequest.objects.using(document._state.db)
+                .filter(
+                    document=document,
+                    actor=actor,
+                    request_id=payload["request_id"],
+                )
+                .first()
+            )
+            if previous and previous.payload == payload:
+                return
             raise ValidationError("Invalid reviewer.")
 
 
@@ -179,8 +216,13 @@ def _mutate_review(document_id, actor_id, payload, using):
         if not can_access(actor, document):
             raise NotFound
         validate_payload(payload, document, actor)
+        validate_reviewer(payload, document, actor)
         if not can_access(actor, document, "change") or document.deleted_at:
             raise PermissionDenied
+        review = DocumentReview.objects.using(using).filter(document=document).first()
+        revision = review.revision if review else 0
+        state = review.state if review else DocumentReview.State.UNREVIEWED
+        action = payload["action"]
         previous = (
             ReviewRequest.objects.using(using)
             .filter(
@@ -190,23 +232,31 @@ def _mutate_review(document_id, actor_id, payload, using):
             )
             .first()
         )
+        if action in ("approve", "reject") and (
+            not review
+            or review.reviewer_id != actor.pk
+            or review.submitted_by_id == actor.pk
+        ):
+            successful_retry = previous and previous.payload == payload
+            stale_assignment = payload["expected_revision"] != revision and (
+                ReviewRequest.objects.using(using)
+                .filter(
+                    document=document,
+                    response__state=DocumentReview.State.PENDING,
+                    response__reviewer=actor.pk,
+                    response__revision=payload["expected_revision"],
+                )
+                .exclude(response__submitted_by=actor.pk)
+                .exists()
+            )
+            if not successful_retry and not stale_assignment:
+                raise PermissionDenied
         if previous:
             if previous.payload != payload:
                 raise ReviewConflict(
                     "request_id was already used for a different payload.",
                 )
             return previous.response
-        validate_reviewer(payload, document, actor)
-        review = DocumentReview.objects.using(using).filter(document=document).first()
-        revision = review.revision if review else 0
-        state = review.state if review else DocumentReview.State.UNREVIEWED
-        action = payload["action"]
-        if action in ("approve", "reject") and (
-            not review
-            or review.reviewer_id != actor.pk
-            or review.submitted_by_id == actor.pk
-        ):
-            raise PermissionDenied
         if payload["expected_revision"] != revision:
             raise ReviewConflict
         transitions = {
@@ -253,17 +303,27 @@ def _mutate_review(document_id, actor_id, payload, using):
 
 def mutate_review(document, actor, payload):
     using = document._state.db
+    return retry_sqlite(
+        lambda: _mutate_review(document.pk, actor.pk, payload, using),
+        using,
+    )
+
+
+def retry_sqlite(operation, using):
+    nested = connections[using].in_atomic_block
     for attempt in range(8):
         try:
-            return _mutate_review(document.pk, actor.pk, payload, using)
+            return operation()
         except Document.DoesNotExist as exc:
             raise NotFound from exc
+        except User.DoesNotExist as exc:
+            raise PermissionDenied from exc
         except OperationalError as exc:
             if connections[using].vendor != "sqlite" or not any(
                 word in str(exc).lower() for word in ("locked", "busy")
             ):
                 raise
-            if attempt == 7:
+            if nested or attempt == 7:
                 raise ReviewConflict("Document is busy. Retry the request.") from exc
             time.sleep(min(0.01 * 2**attempt, 0.2))
 
