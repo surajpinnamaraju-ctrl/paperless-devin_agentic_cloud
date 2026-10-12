@@ -9,6 +9,7 @@ import pytest
 from django.contrib.auth.models import Group
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import close_old_connections
 from django.db import connection
 from django.db import transaction
@@ -31,6 +32,22 @@ if TYPE_CHECKING:
     from django_softdelete.managers import GlobalQuerySet
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture(scope="module")
+def django_db_setup(django_db_setup, django_db_blocker):
+    with django_db_blocker.unblock():
+        initial_data = connection.creation.serialize_db_to_string()
+    yield django_db_setup
+    with django_db_blocker.unblock():
+        call_command(
+            "flush",
+            verbosity=0,
+            interactive=False,
+            reset_sequences=True,
+            inhibit_post_migrate=True,
+        )
+        connection.creation.deserialize_db_from_string(initial_data)
 
 
 @pytest.fixture
@@ -571,7 +588,7 @@ def test_eligible_reviewers_include_group_and_superuser_but_not_inactive(review_
     )
 
 
-@pytest.mark.django_db(transaction=True, reset_sequences=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True, reset_sequences=True)
 def test_migration_preserves_existing_documents_versions_and_permissions(review_case):
     document, submitter, reviewer, client = review_case
     version = DocumentFactory(
@@ -747,7 +764,7 @@ def test_queue_rejects_invalid_queries(review_case, query):
     assert review_case[3].get(f"/api/review_queue/?{query}").status_code == 400
 
 
-@pytest.mark.django_db(transaction=True, reset_sequences=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True, reset_sequences=True)
 @pytest.mark.parametrize("identical", [True, False])
 def test_concurrent_decisions_and_identical_retries(review_case, identical):
     document, _submitter, reviewer, _client = review_case

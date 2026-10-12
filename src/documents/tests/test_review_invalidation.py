@@ -4,7 +4,9 @@ from threading import Barrier
 from unittest import mock
 
 import pytest
+from django.core.management import call_command
 from django.db import close_old_connections
+from django.db import connection
 from django.db import transaction
 from rest_framework.test import APIClient
 
@@ -13,6 +15,22 @@ from documents.models import Document
 from documents.review_hooks import review_actor
 from paperless_testing.factories import DocumentFactory
 from paperless_testing.factories import UserFactory
+
+
+@pytest.fixture(scope="module")
+def django_db_setup(django_db_setup, django_db_blocker):
+    with django_db_blocker.unblock():
+        initial_data = connection.creation.serialize_db_to_string()
+    yield django_db_setup
+    with django_db_blocker.unblock():
+        call_command(
+            "flush",
+            verbosity=0,
+            interactive=False,
+            reset_sequences=True,
+            inhibit_post_migrate=True,
+        )
+        connection.creation.deserialize_db_from_string(initial_data)
 
 
 def mutation(client, document, action, revision, **kwargs):
@@ -167,7 +185,7 @@ def test_trash_restore_preserves_review_and_history(approved_review):
     assert snapshot(client, document) == expected
 
 
-@pytest.mark.django_db(transaction=True, reset_sequences=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True, reset_sequences=True)
 def test_content_change_racing_approval_never_leaves_changed_content_approved():
     submitter = UserFactory(superuser=True)
     reviewer = UserFactory(superuser=True)
