@@ -167,7 +167,7 @@ def test_trash_restore_preserves_review_and_history(approved_review):
     assert snapshot(client, document) == expected
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, reset_sequences=True, serialized_rollback=True)
 def test_content_change_racing_approval_never_leaves_changed_content_approved():
     submitter = UserFactory(superuser=True)
     reviewer = UserFactory(superuser=True)

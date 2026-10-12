@@ -571,7 +571,7 @@ def test_eligible_reviewers_include_group_and_superuser_but_not_inactive(review_
     )
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, reset_sequences=True, serialized_rollback=True)
 def test_migration_preserves_existing_documents_versions_and_permissions(review_case):
     document, submitter, reviewer, client = review_case
     version = DocumentFactory(
@@ -747,7 +747,7 @@ def test_queue_rejects_invalid_queries(review_case, query):
     assert review_case[3].get(f"/api/review_queue/?{query}").status_code == 400
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, reset_sequences=True, serialized_rollback=True)
 @pytest.mark.parametrize("identical", [True, False])
 def test_concurrent_decisions_and_identical_retries(review_case, identical):
     document, _submitter, reviewer, _client = review_case
