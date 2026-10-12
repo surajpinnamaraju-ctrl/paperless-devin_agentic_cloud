@@ -30,6 +30,94 @@ from documents.data_models import DocumentSource
 from documents.parsers import get_default_file_extension
 
 
+class DocumentReview(models.Model):
+    # django-softdelete inspects this on reverse one-to-one links during restore.
+    transaction_id = None
+
+    class State(models.TextChoices):
+        UNREVIEWED = "unreviewed"
+        PENDING = "pending"
+        APPROVED = "approved"
+        REJECTED = "rejected"
+
+    document = models.OneToOneField(
+        "Document",
+        on_delete=models.DO_NOTHING,
+        related_name="review",
+    )
+    state = models.CharField(
+        max_length=12,
+        choices=State.choices,
+        default=State.UNREVIEWED,
+    )
+    revision = models.PositiveIntegerField(default=0)
+    reviewer = models.ForeignKey(
+        User,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_reviews",
+    )
+    submitted_by = models.ForeignKey(
+        User,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="submitted_reviews",
+    )
+
+    def __str__(self):
+        return f"Document {self.document_id}: {self.state} ({self.revision})"
+
+
+class ReviewEvent(models.Model):
+    review = models.ForeignKey(
+        DocumentReview,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    action = models.CharField(max_length=12)
+    actor = models.ForeignKey(User, null=True, on_delete=models.SET_NULL)
+    revision = models.PositiveIntegerField()
+    at = models.DateTimeField(default=timezone.now, editable=False)
+    request_id = models.UUIDField(null=True)
+    comment = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ("revision",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["review", "revision"],
+                name="review_event_revision_unique",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Review {self.review_id}: {self.action} ({self.revision})"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Review events cannot be changed.")
+        return super().save(*args, **kwargs)
+
+
+class ReviewRequest(models.Model):
+    document = models.ForeignKey("Document", on_delete=models.DO_NOTHING)
+    actor = models.ForeignKey(User, on_delete=models.CASCADE)
+    request_id = models.UUIDField()
+    payload = models.JSONField()
+    response = models.JSONField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document", "actor", "request_id"],
+                name="review_request_key_unique",
+            ),
+        ]
+
+    def __str__(self):
+        return str(self.request_id)
+
+
 class ModelWithOwner(models.Model):
     owner = models.ForeignKey(
         User,

@@ -16,6 +16,8 @@ from drf_spectacular.views import SpectacularAPIView
 from drf_spectacular.views import SpectacularSwaggerView
 from rest_framework.routers import DefaultRouter
 
+from documents.review_views import DocumentReviewView
+from documents.review_views import ReviewQueueView
 from documents.views import BulkDownloadView
 from documents.views import BulkEditObjectsView
 from documents.views import BulkEditView
@@ -294,6 +296,12 @@ urlpatterns = [
                     "^$",  # Redirect to the API swagger view
                     RedirectView.as_view(url="schema/view/"),
                 ),
+                path(
+                    "documents/<int:pk>/review/",
+                    DocumentReviewView.as_view(),
+                    name="document-review",
+                ),
+                path("review_queue/", ReviewQueueView.as_view(), name="review-queue"),
                 *api_router.urls,
             ],
         ),
