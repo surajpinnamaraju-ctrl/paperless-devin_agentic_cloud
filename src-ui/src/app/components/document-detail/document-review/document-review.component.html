@@ -1,0 +1,148 @@
+<section aria-label="Document review" i18n-aria-label [attr.aria-busy]="busy">
+  @if (feedback) {
+    <p class="alert alert-info" role="status">{{ feedback }}</p>
+  }
+  @if (busy) {
+    <p role="status" i18n>Loading review...</p>
+  }
+  <button
+    type="button"
+    class="btn btn-sm btn-outline-secondary mb-3"
+    (click)="load()"
+    [disabled]="busy"
+    i18n
+  >
+    Refresh review
+  </button>
+  @if (retryMutation) {
+    <button
+      type="button"
+      class="btn btn-sm btn-primary ms-2 mb-3"
+      (click)="retry()"
+      [disabled]="busy"
+      i18n
+    >
+      Retry same request
+    </button>
+  }
+  @if (review(); as current) {
+    <dl class="row">
+      <dt class="col-5" i18n>Review state</dt>
+      <dd class="col-7">{{ stateLabels[current.state] }}</dd>
+      <dt class="col-5" i18n>Revision</dt>
+      <dd class="col-7">{{ current.revision }}</dd>
+      <dt class="col-5" i18n>Reviewer ID</dt>
+      <dd class="col-7">{{ current.reviewer ?? '—' }}</dd>
+      <dt class="col-5" i18n>Submitter ID</dt>
+      <dd class="col-7">{{ current.submitted_by ?? '—' }}</dd>
+    </dl>
+    @if (inTrash) {
+      <p i18n>Review cannot be changed while the document is in trash.</p>
+    }
+    <div [formGroup]="form">
+      @if (allowed('submit')) {
+        <div class="mb-3">
+          <label for="review-reviewer" class="form-label" i18n>Reviewer</label>
+          <select
+            id="review-reviewer"
+            class="form-select"
+            formControlName="reviewer"
+            aria-describedby="review-reviewer-help"
+          >
+            <option [ngValue]="null" i18n>Select an eligible reviewer</option>
+            @for (reviewer of current.eligible_reviewers; track reviewer.id) {
+              <option [ngValue]="reviewer.id">{{ reviewer.username }}</option>
+            }
+          </select>
+          <div id="review-reviewer-help" class="form-text" i18n>
+            Only eligible reviewers with document access are listed. You cannot
+            review your own submission.
+          </div>
+        </div>
+        <button
+          type="button"
+          class="btn btn-sm btn-primary me-2 mb-3"
+          (click)="act('submit')"
+          [disabled]="busy || !!retryMutation || !validReviewer"
+          i18n
+        >
+          Submit for review
+        </button>
+      }
+      @if (allowed('reject')) {
+        <div class="mb-3">
+          <label for="review-comment" class="form-label" i18n
+            >Rejection comment</label
+          >
+          <textarea
+            id="review-comment"
+            class="form-control"
+            rows="3"
+            formControlName="comment"
+            aria-describedby="review-comment-help"
+            [attr.aria-invalid]="form.controls.comment.dirty && !validComment"
+          ></textarea>
+          <div id="review-comment-help" class="form-text" i18n>
+            Required for rejection: 1–2000 characters after trimming.
+          </div>
+        </div>
+        <button
+          type="button"
+          class="btn btn-sm btn-danger me-2 mb-3"
+          (click)="act('reject')"
+          [disabled]="busy || !!retryMutation || !validComment"
+          i18n
+        >
+          Reject
+        </button>
+      }
+      @if (allowed('approve')) {
+        <button
+          type="button"
+          class="btn btn-sm btn-success me-2 mb-3"
+          (click)="act('approve')"
+          [disabled]="busy || !!retryMutation"
+          i18n
+        >
+          Approve
+        </button>
+      }
+      @if (allowed('reopen')) {
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-primary me-2 mb-3"
+          (click)="act('reopen')"
+          [disabled]="busy || !!retryMutation"
+          i18n
+        >
+          Reopen
+        </button>
+      }
+    </div>
+    <h6 i18n>Review history</h6>
+    <ol class="list-group list-group-numbered">
+      @for (event of current.history; track event.revision) {
+        <li class="list-group-item">
+          <div>
+            {{ actionLabels[event.action] }} ·
+            <ng-container i18n>Revision</ng-container> {{ event.revision }}
+          </div>
+          <div class="small text-muted">
+            <time [attr.datetime]="event.at">{{
+              event.at | date: 'medium'
+            }}</time>
+            · <ng-container i18n>Actor ID</ng-container>
+            {{ event.actor ?? '—' }}
+          </div>
+          @if (event.comment) {
+            <p class="mb-0 whitespace-preserve review-comment">
+              {{ event.comment }}
+            </p>
+          }
+        </li>
+      } @empty {
+        <li class="list-group-item" i18n>No review history.</li>
+      }
+    </ol>
+  }
+</section>

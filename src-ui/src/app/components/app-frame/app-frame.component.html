@@ -105,6 +105,13 @@
               <i-bs class="me-2" name="files"></i-bs><span class="nav-link-label"><ng-container i18n>Documents</ng-container></span>
             </a>
           </li>
+          <li class="nav-item app-link" *pngxIfPermissions="{ action: PermissionAction.View, type: PermissionType.Document }">
+            <a class="nav-link" routerLink="review-queue" routerLinkActive="active" (click)="closeMenu()"
+              ngbPopover="Review queue" i18n-ngbPopover [disablePopover]="!slimSidebarPopoversEnabled" placement="end"
+              container="body" triggers="mouseenter:mouseleave" popoverClass="popover-slim">
+              <i-bs class="me-2" name="files"></i-bs><span class="nav-link-label" i18n>Review queue</span>
+            </a>
+          </li>
         </ul>
 
         <div class="nav-group mt-3 mb-1" *pngxIfPermissions="{ action: PermissionAction.View, type: PermissionType.SavedView }">

@@ -381,6 +381,13 @@
           }
         </li>
 
+        <li [ngbNavItem]="DocumentDetailNavIDs.Review">
+          <a ngbNavLink i18n>Review</a>
+          <ng-template ngbNavContent>
+            <pngx-document-review [documentId]="documentId()" [refreshToken]="document()?.modified" [inTrash]="!!document()?.deleted_at"></pngx-document-review>
+          </ng-template>
+        </li>
+
         @if (notesEnabled) {
           <li [ngbNavItem]="DocumentDetailNavIDs.Notes">
             <a class="text-nowrap" ngbNavLink i18n>Notes @if (document()?.notes.length) {

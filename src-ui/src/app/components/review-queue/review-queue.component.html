@@ -1,0 +1,122 @@
+<pngx-page-header
+  title="Review queue"
+  i18n-title
+  [loading]="busy"
+></pngx-page-header>
+
+<form
+  [formGroup]="form"
+  (ngSubmit)="applyFilters()"
+  class="row g-3 align-items-end mb-3"
+>
+  <div class="col-sm-3">
+    <label for="queue-state" class="form-label" i18n>Review state</label>
+    <select id="queue-state" class="form-select" formControlName="state">
+      <option value="" i18n>All states</option>
+      @for (state of states; track state) {
+        <option [value]="state">{{ stateLabels[state] }}</option>
+      }
+    </select>
+  </div>
+  <div class="col-sm-3">
+    <label for="queue-reviewer" class="form-label" i18n>Reviewer ID</label>
+    <input
+      id="queue-reviewer"
+      class="form-control"
+      type="number"
+      min="1"
+      step="1"
+      formControlName="reviewer"
+      aria-describedby="queue-reviewer-help"
+    />
+    <div id="queue-reviewer-help" class="form-text" i18n>
+      Leave blank for all reviewers.
+    </div>
+  </div>
+  <div class="col-sm-3">
+    <label for="queue-page-size" class="form-label" i18n
+      >Documents per page</label
+    >
+    <select id="queue-page-size" class="form-select" formControlName="pageSize">
+      <option [ngValue]="10">10</option>
+      <option [ngValue]="20">20</option>
+      <option [ngValue]="50">50</option>
+      <option [ngValue]="100">100</option>
+    </select>
+  </div>
+  <div class="col-sm-3">
+    <button class="btn btn-primary me-2" type="submit" [disabled]="busy" i18n>
+      Apply filters
+    </button>
+    <button
+      class="btn btn-outline-secondary"
+      type="button"
+      (click)="load()"
+      [disabled]="busy"
+      i18n
+    >
+      Refresh
+    </button>
+  </div>
+</form>
+
+@if (error) {
+  <p class="alert alert-danger" role="alert">{{ error }}</p>
+}
+<section
+  aria-label="Review queue results"
+  i18n-aria-label
+  [attr.aria-busy]="busy"
+>
+  @if (busy) {
+    <p role="status" i18n>Loading review queue...</p>
+  } @else if (!error) {
+    <p role="status" i18n>{{ count }} documents</p>
+    <div class="table-responsive">
+      <table class="table align-middle">
+        <caption class="visually-hidden" i18n>
+          Documents visible to you with review history
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col" i18n>Document</th>
+            <th scope="col" i18n>Review state</th>
+            <th scope="col" i18n>Reviewer ID</th>
+            <th scope="col" i18n>Revision</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of items; track item.document) {
+            <tr>
+              <td>
+                <a [routerLink]="['/documents', item.document, 'review']"
+                  ><ng-container i18n>Document</ng-container> #{{
+                    item.document
+                  }}</a
+                >
+              </td>
+              <td>{{ stateLabels[item.state] }}</td>
+              <td>{{ item.reviewer ?? '—' }}</td>
+              <td>{{ item.revision }}</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="4" i18n>No documents match these filters.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    <ngb-pagination
+      [collectionSize]="count"
+      [page]="page"
+      [pageSize]="pageSize"
+      [maxSize]="5"
+      [rotate]="true"
+      [boundaryLinks]="true"
+      (pageChange)="changePage($event)"
+      aria-label="Review queue pages"
+      i18n-aria-label
+    ></ngb-pagination>
+  }
+</section>
