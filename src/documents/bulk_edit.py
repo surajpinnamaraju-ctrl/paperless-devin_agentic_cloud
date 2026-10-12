@@ -30,6 +30,8 @@ from documents.models import StoragePath
 from documents.models import Tag
 from documents.permissions import set_permissions_for_objects
 from documents.plugins.helpers import DocumentsStatusManager
+from documents.review_hooks import lock_document
+from documents.review_hooks import review_actor
 from documents.tasks import bulk_update_documents
 from documents.tasks import consume_file
 from documents.tasks import remove_document_from_index
@@ -636,7 +638,9 @@ def merge_as_versions(
     version_label: str | None = None,
     user: User | None = None,
 ) -> Literal["OK"]:
-    with transaction.atomic():
+    with transaction.atomic(), review_actor(user):
+        for doc_id in sorted(doc_ids):
+            lock_document(doc_id)
         documents = list(
             # Ordered by pk so concurrent merges take the row locks in the same order
             Document.objects.select_for_update()

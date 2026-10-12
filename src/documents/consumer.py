@@ -46,6 +46,8 @@ from documents.plugins.base import NoSetupPluginMixin
 from documents.plugins.date_parsing import get_date_parser
 from documents.plugins.helpers import ProgressManager
 from documents.plugins.helpers import ProgressStatusOptions
+from documents.review_hooks import lock_document
+from documents.review_hooks import review_actor
 from documents.signals import document_consumption_finished
 from documents.signals import document_consumption_started
 from documents.signals import document_updated
@@ -258,7 +260,7 @@ class ConsumerPlugin(
         mime_type: str,
     ) -> Document:
         self.log.debug("Saving record for updated version to database")
-        root_doc_frozen = Document.objects.select_for_update().get(pk=root_doc.pk)
+        root_doc_frozen = lock_document(root_doc.pk)
         next_version_index = (
             Document.global_objects.filter(
                 root_document_id=root_doc_frozen.pk,
@@ -604,7 +606,14 @@ class ConsumerPlugin(
                 # now that everything is done, we can start to store the document
                 # in the system. This will be a transaction and reasonably fast.
                 try:
-                    with transaction.atomic():
+                    with (
+                        transaction.atomic(),
+                        review_actor(
+                            User.objects.filter(pk=self.metadata.actor_id).first()
+                            if self.metadata.actor_id is not None
+                            else None,
+                        ),
+                    ):
                         # store the document.
                         if self.input_doc.root_document_id:
                             # If this is a new version of an existing document, we need

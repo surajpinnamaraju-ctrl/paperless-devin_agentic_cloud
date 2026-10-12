@@ -1,6 +1,9 @@
 import sys
 
 from django.contrib.auth.models import User
+from drf_spectacular.utils import OpenApiParameter
+from drf_spectacular.utils import extend_schema
+from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -16,6 +19,51 @@ from documents.review import validate_reviewer
 from documents.review import visible_document
 
 
+class ReviewEventSerializer(serializers.Serializer):
+    action = serializers.CharField()
+    actor = serializers.IntegerField(allow_null=True)
+    revision = serializers.IntegerField(min_value=1)
+    at = serializers.DateTimeField()
+    request_id = serializers.UUIDField(allow_null=True)
+    comment = serializers.CharField(allow_blank=True)
+
+
+class EligibleReviewerSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+
+
+class ReviewSerializer(serializers.Serializer):
+    document = serializers.IntegerField()
+    state = serializers.ChoiceField(choices=DocumentReview.State.choices)
+    revision = serializers.IntegerField(min_value=0)
+    reviewer = serializers.IntegerField(allow_null=True)
+    submitted_by = serializers.IntegerField(allow_null=True)
+    history = ReviewEventSerializer(many=True)
+    allowed_actions = serializers.ListField(child=serializers.CharField())
+    eligible_reviewers = EligibleReviewerSerializer(many=True)
+
+
+class ReviewMutationSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=("submit", "approve", "reject", "reopen"))
+    expected_revision = serializers.IntegerField(min_value=0)
+    request_id = serializers.UUIDField()
+    reviewer = serializers.IntegerField(min_value=1, required=False)
+    comment = serializers.CharField(max_length=2000, required=False)
+
+
+class ReviewQueueItemSerializer(serializers.Serializer):
+    document = serializers.IntegerField()
+    state = serializers.ChoiceField(choices=DocumentReview.State.choices)
+    reviewer = serializers.IntegerField(allow_null=True)
+    revision = serializers.IntegerField(min_value=1)
+
+
+class ReviewQueueSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    results = ReviewQueueItemSerializer(many=True)
+
+
 class DocumentReviewView(APIView):
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post", "head", "options"]
@@ -28,9 +76,11 @@ class DocumentReviewView(APIView):
         )
         self.document = visible_document(request.user, kwargs["pk"])
 
+    @extend_schema(responses=ReviewSerializer)
     def get(self, request, pk):
         return Response(read_review(self.document, request.user))
 
+    @extend_schema(request=ReviewMutationSerializer, responses=ReviewSerializer)
     def post(self, request, pk):
         validate_payload(request.data, self.document, request.user)
         validate_reviewer(request.data, self.document, request.user)
@@ -60,6 +110,15 @@ class ReviewQueueView(APIView):
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "head", "options"]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("state", str, enum=list(DocumentReview.State.values)),
+            OpenApiParameter("reviewer", int),
+            OpenApiParameter("page", int),
+            OpenApiParameter("page_size", int),
+        ],
+        responses=ReviewQueueSerializer,
+    )
     def get(self, request):
         params = request.query_params
         if set(params) - {"state", "reviewer", "page", "page_size"} or any(

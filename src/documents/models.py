@@ -1,7 +1,9 @@
 import datetime
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Final
+from typing import cast
 
 import pathvalidate
 from django.conf import settings
@@ -11,6 +13,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
@@ -28,6 +31,13 @@ from django_softdelete.models import SoftDeleteModel
 
 from documents.data_models import DocumentSource
 from documents.parsers import get_default_file_extension
+from documents.review_hooks import retry_document_write
+from documents.review_managers import DeletedDocumentManager
+from documents.review_managers import DocumentManager
+from documents.review_managers import GlobalDocumentManager
+
+if TYPE_CHECKING:
+    from documents.review_managers import DocumentQuerySet
 
 
 class DocumentReview(models.Model):
@@ -425,6 +435,10 @@ class Document(SoftDeleteModel, ModelWithOwner):  # type: ignore[django-manager-
         help_text=_("Optional short label for a document version."),
     )
 
+    objects = DocumentManager()
+    deleted_objects = DeletedDocumentManager()
+    global_objects = GlobalDocumentManager()
+
     class Meta:
         ordering = ("-created",)
         verbose_name = _("document")
@@ -453,6 +467,12 @@ class Document(SoftDeleteModel, ModelWithOwner):  # type: ignore[django-manager-
         if self.title:
             res += f" {self.title}"
         return res
+
+    @retry_document_write
+    def save(self, *args, **kwargs):
+        from documents.review_hooks import save_document
+
+        return save_document(self, super().save, args, kwargs)
 
     def get_effective_barcodes(self) -> list["DocumentBarcode"]:
         """
@@ -624,25 +644,42 @@ class Document(SoftDeleteModel, ModelWithOwner):  # type: ignore[django-manager-
         tags_to_add = self.tags.model.objects.filter(id__in=tag_ids)
         self.tags.add(*tags_to_add)
 
+    @retry_document_write
     def delete(
         self,
         *args,
         transaction_id=None,
         **kwargs,
     ):
-        # Versions must share the root's transaction ID so they are restored
-        # together by django-softdelete.
-        if transaction_id is None:
-            transaction_id = uuid.uuid4()
-        if self.root_document_id is None:
-            Document.objects.filter(root_document=self).delete(
-                transaction_id=transaction_id,
+        from documents.review_hooks import invalidate_locked
+        from documents.review_hooks import lock_document
+        from documents.review_hooks import preserve_review
+
+        using = kwargs.get("using") or self._state.db or "default"
+        with transaction.atomic(using=using):
+            root = lock_document(self.root_document_id or self.pk, using=using)
+            # Versions share the root's transaction ID for restore.
+            if transaction_id is None:
+                transaction_id = uuid.uuid4()
+            if self.root_document_id is None:
+                with preserve_review():
+                    versions = cast(
+                        "DocumentQuerySet",
+                        Document.objects.using(using).filter(root_document=self),
+                    )
+                    versions.delete(transaction_id=cast("str", transaction_id))
+                    return super().delete(
+                        *args,
+                        transaction_id=cast("str", transaction_id),
+                        **kwargs,
+                    )
+            result = super().delete(
+                *args,
+                transaction_id=cast("str", transaction_id),
+                **kwargs,
             )
-        return super().delete(
-            *args,
-            transaction_id=transaction_id,
-            **kwargs,
-        )
+            invalidate_locked(root)
+            return result
 
 
 class SavedView(ModelWithOwner):

@@ -184,6 +184,7 @@ from documents.permissions import permitted_object_ids
 from documents.permissions import set_permissions_for_objects
 from documents.permissions import user_is_unrestricted
 from documents.plugins.date_parsing import get_date_parser
+from documents.review_hooks import request_review_actor
 from documents.schema import generate_object_with_permissions_schema
 from documents.search import SearchHit
 from documents.serialisers import AcknowledgeTasksViewSerializer
@@ -1286,6 +1287,7 @@ class DocumentViewSet(
             response.data["page_count"] = content_doc.page_count
         return response
 
+    @request_review_actor
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         root_doc = self.get_object()
@@ -2263,6 +2265,7 @@ class DocumentViewSet(
         detail=True,
         url_path=r"versions/(?P<version_id>\d+)",
     )
+    @request_review_actor
     def delete_version(self, request, pk=None, version_id=None):
         root_doc = self._get_root_doc_for_version_action(pk)
 
